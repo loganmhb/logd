@@ -1,5 +1,5 @@
-(ns logd.raft-test
-  (:require [logd.raft :as sut]
+(ns logd.raft.follower-test
+  (:require [logd.raft.follower :as sut]
             [clojure.test :as t]))
 
 (t/deftest append-entries-test

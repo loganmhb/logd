@@ -1,8 +1,4 @@
-(ns logd.raft
-  (:require [clojure.core.async :as async]
-            [mount.core :refer [defstate]]))
-
-(defrecord LogEntry [term data])
+(ns logd.raft.follower)
 
 (defn initial-raft-state
   "Structure describing the state of the Raft system, given a list of
@@ -20,11 +16,7 @@
    :commit-index 0
    :last-applied 0
    :peers #{peers}
-   :state :follower
-   :heartbeat (async/chan)})
-
-(defstate raft-state
-  :start (atom initial-raft-state))
+   :state :follower})
 
 (defn get-log-index
   "Provides 1-indexed log access to comply with Raft semantics"
