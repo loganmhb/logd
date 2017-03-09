@@ -63,3 +63,16 @@
                                (into (vec (take (:prev-log-index data) log))
                                      (:entries data))))
                 (assoc :current-term (:term data)))}))
+
+
+(defn request-vote
+  "Implements the RequestVote RPC."
+  [state data]
+  (if (or (< (:term data) (:current-term state))
+          (< (:last-log-index data) (count (:log state)))
+          (:voted-for state))
+    {:response {:vote-granted false
+                :term (:current-term state)}
+     :state state}
+    {:response {:vote-granted true
+                :term (:current-term state)}}))

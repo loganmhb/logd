@@ -59,3 +59,34 @@
                       :log [{:term 1 :data "correct"}]
                       :current-term 1)
                (:state result))))))
+
+
+(t/deftest request-vote-test
+  (t/testing "rejects vote if requester term < current-term"
+    (let [raft-state (assoc (sut/initial-raft-state [])
+                            :current-term 2)
+          result (sut/request-vote raft-state {:term 1
+                                               :candidate-id "peer1"
+                                               :last-log-index 0
+                                               :last-log-term 0})]
+      (t/is (= raft-state (:state result)))
+      (t/is (= {:vote-granted false :term 2}
+               (:response result)))))
+  (t/testing "rejects vote if candidate's log has fewer entries"
+    (let [raft-state (assoc (sut/initial-raft-state [])
+                            :log [{:term 0}])
+          result (sut/request-vote raft-state {:term 0
+                                               :candidate-id "peer1"
+                                               :last-log-index 0
+                                               :last-log-term 0})]
+      (t/is (= {:vote-granted false :term 0}
+               (:response result)))))
+  (t/testing "rejects vote if already voted for another candidate"
+    (let [raft-state (assoc (sut/initial-raft-state [])
+                            :voted-for "peer2")
+          result (sut/request-vote raft-state {:term 0
+                                               :candidate-id "peer1"
+                                               :last-log-index 0
+                                               :last-log-term 0})]
+      (t/is (= {:vote-granted false :term 0}
+               (:response result))))))
