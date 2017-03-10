@@ -1,23 +1,5 @@
 (ns logd.raft.follower)
 
-(defn initial-raft-state
-  "Structure describing the state of the Raft system, given a list of
-  peers' domains/IPs.
-
-  The Raft protocol specifies a log of changes applied to a state
-  machine, but since the desired state here is a log no actual state
-  machine is necessary, only the log itself -- :last-applied simply
-  indicates the portion of the log that could be considered
-  canonical."
-  [peers]
-  {:current-term 0
-   :voted-for nil
-   :log []
-   :commit-index 0
-   :last-applied 0
-   :peers #{peers}
-   :state :follower})
-
 (defn get-log-index
   "Provides 1-indexed log access to comply with Raft semantics"
   [state n]
