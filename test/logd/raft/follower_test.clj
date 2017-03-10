@@ -58,7 +58,18 @@
       (t/is (= (assoc raft-state
                       :log [{:term 1 :data "correct"}]
                       :current-term 1)
-               (:state result))))))
+               (:state result)))))
+  (t/testing "updates local commit index when leader's is greater"
+    (let [raft-state (assoc (sut/initial-raft-state [])
+                            :log [{:term 0 :data "correct"}])
+          result (sut/append-entries raft-state {:term 1
+                                                 :leader-id "peer1"
+                                                 :prev-log-index 0
+                                                 :prev-log-term 0
+                                                 :entries [{:term 1 :data "correct"}]
+                                                 :leader-commit 1})]
+      (t/is (= {:success true :term 1} (:response result)))
+      (t/is (= 1 (:commit-index (:state result)))))))
 
 
 (t/deftest request-vote-test

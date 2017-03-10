@@ -54,7 +54,8 @@
                 (update :log (fn [log]
                                (into (vec (take (:prev-log-index data) log))
                                      (:entries data))))
-                (assoc :current-term (:term data)))}))
+                (assoc :current-term (:term data))
+                (assoc :commit-index (:leader-commit data)))}))
 
 
 (defn request-vote
