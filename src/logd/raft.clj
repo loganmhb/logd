@@ -46,8 +46,9 @@
     (assoc raft-state
            :role :candidate
            :election-timeout (new-election-timeout)
+           :current-term (inc (:current-term raft-state))
            :requested-votes? false
-           :votes-received 0)
+           :votes-received 1) ; vote for self
     
     ;; Handle an append-entries RPC call and update the state appropriately,
     ;; resetting the election timer if the call was successful

@@ -13,8 +13,11 @@
                     :request-vote (async/chan)}
           next-state (sut/run-follower raft-state channels)]
       (t/is (= :candidate (:role next-state)))
+      (t/is (= (inc (:current-term raft-state))
+               (:current-term next-state)))
       (t/is (false? (:requested-votes? next-state)))
-      (t/is (zero? (:votes-received next-state)))
+      ;; vote for self
+      (t/is (= 1 (:votes-received next-state)))
       (t/is (not= initial-timeout (:election-timeout next-state)))))
   (t/testing "receiving an append-entries call resets the election timeout"
     (let [initial-timeout (async/timeout 10)
