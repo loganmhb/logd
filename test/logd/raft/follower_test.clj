@@ -101,4 +101,13 @@
                                                :last-log-index 0
                                                :last-log-term 0})]
       (t/is (= {:vote-granted false :term 0}
-               (:response result))))))
+               (:response result)))))
+  (t/testing "otherwise, grants vote and records it"
+    (let [raft-state (raft/initial-raft-state [])
+          result (sut/request-vote raft-state {:term 0
+                                               :candidate-id "peer1"
+                                               :last-log-index 0
+                                               :last-log-term 0})]
+      (t/is (= {:vote-granted true :term 0}
+               (:response result)))
+      (t/is (= "peer1" (:voted-for (:state result)))))))

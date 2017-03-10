@@ -50,4 +50,6 @@
                 :term (:current-term state)}
      :state state}
     {:response {:vote-granted true
-                :term (:current-term state)}}))
+                :term (:current-term state)}
+     :state (assoc state :voted-for (:candidate-id data))}))
+
