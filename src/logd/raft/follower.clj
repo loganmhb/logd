@@ -24,24 +24,24 @@
   [state data]
   (cond
     (< (:term data) (:current-term state))
-    {:response {:term (:current-term state)
-                :success false}
+    {:actions [[:rpc-respond {:term (:current-term state)
+                              :success false}]]
      :state state}
 
     (or (prev-log-index-missing? state (:prev-log-index data))
         (prev-log-entry-from-wrong-term? state data))
-    {:response {:term (:current-term state)
-                :success false}
-     :actions [[:reset-election-timeout]]
+    {:actions [[:reset-election-timeout]
+               [:rpc-respond {:term (:current-term state)
+                              :success false}]]
      :state state}
 
     ;; If none of those conditions are met, the RPC is acceptable and
     ;; we need to update the state as well as resetting the election
     ;; timer.
     :else
-    {:response {:success true
-                :term (:term data)}
-     :actions [[:reset-election-timeout]]
+    {:actions [[:reset-election-timeout]
+               [:rpc-respond {:success true
+                              :term (:term data)}]]
      :state (-> state
                 (update :log (fn [log]
                                (into (vec (take (:prev-log-index data) log))
@@ -56,11 +56,11 @@
   (if (or (< (:term data) (:current-term state))
           (< (:last-log-index data) (count (:log state)))
           (:voted-for state))
-    {:response {:vote-granted false
-                :term (:current-term state)}
+    {:actions [[:rpc-respond {:vote-granted false
+                              :term (:current-term state)}]] 
      :state state}
-    {:response {:vote-granted true
-                :term (:current-term state)}
-     :actions [[:reset-election-timeout]]
+    {:actions [[:reset-election-timeout]
+               [:rpc-respond {:vote-granted true
+                              :term (:current-term state)}]]
      :state (assoc state :voted-for (:candidate-id data))}))
 
