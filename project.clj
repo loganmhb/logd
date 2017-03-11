@@ -12,4 +12,7 @@
                  [mount "0.1.11"]
                  [cheshire "5.7.0"]
                  [org.clojure/core.async "0.2.395"]
-                 [org.clojure/core.async "0.3.441"]])
+                 [org.clojure/core.async "0.3.441"]
+                 [gloss "0.2.6"]
+                 [aleph "0.4.3"]
+                 [manifold "0.1.6"]])
