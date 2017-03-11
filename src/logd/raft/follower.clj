@@ -22,16 +22,26 @@
   Raft state applying the call (or an unchanged state if the call was
   rejected)."
   [state data]
-  (if (or (< (:term data) (:current-term state))
-          (prev-log-index-missing? state (:prev-log-index data))
-          (prev-log-entry-from-wrong-term? state data))
+  (cond
+    (< (:term data) (:current-term state))
     {:response {:term (:current-term state)
                 :success false}
      :state state}
+
+    (or (prev-log-index-missing? state (:prev-log-index data))
+        (prev-log-entry-from-wrong-term? state data))
+    {:response {:term (:current-term state)
+                :success false}
+     :actions [[:reset-election-timeout]]
+     :state state}
+
     ;; If none of those conditions are met, the RPC is acceptable and
-    ;; we need to update the state.
+    ;; we need to update the state as well as resetting the election
+    ;; timer.
+    :else
     {:response {:success true
                 :term (:term data)}
+     :actions [[:reset-election-timeout]]
      :state (-> state
                 (update :log (fn [log]
                                (into (vec (take (:prev-log-index data) log))
@@ -51,5 +61,6 @@
      :state state}
     {:response {:vote-granted true
                 :term (:current-term state)}
+     :actions [[:reset-election-timeout]]
      :state (assoc state :voted-for (:candidate-id data))}))
 
