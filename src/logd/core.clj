@@ -1,4 +1,5 @@
 (ns logd.core
+  (:gen-class)
   (:require [cheshire.core :as json]
             [clojure.tools.logging :as log]
             [compojure.core :refer [defroutes GET POST]]
@@ -44,7 +45,8 @@
   :stop (.close peer-server))
 
 (defn -main [& peer-hosts]
-  (mount.core/start))
+  (mount.core/start)
+  (raft/run-raft event-stream (raft/initial-raft-state [])))
 
 (comment
   (d/chain (ltcp/call-rpc "localhost" 3456

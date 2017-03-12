@@ -1,10 +1,7 @@
 (ns logd.raft
-  (:require [clojure.core.async :as async]
-            [logd.raft.candidate :as candidate]
-            [logd.raft.follower :as follower]
-            [manifold.stream :as s]
+  (:require [clojure.tools.logging :as log]
             [manifold.deferred :as d]
-            [clojure.tools.logging :as log]))
+            [manifold.stream :as s]))
 
 (defn new-election-timeout
   []
@@ -141,12 +138,18 @@
 (defn handle-read
   "If leader, send AppendEntries to confirm leadership, then reply with log.
    Otherwise, redirect to the leader."
-  [raft-state event])
+  [raft-state event]
+  ;;FIXME: don't handle reads as a follower, and send a round of AppendEntries
+  ;;before replying to a read as a leader
+  (log/info "Handling read:" event)
+  (d/success! (:result event) (:log raft-state))
+  raft-state)
 
 (defn handle-write
   "If leader, send AppendEntries and wait for majority success, then reply success.
    Otherwise, redirect to the leader."
-  [raft-state event])
+  [raft-state event]
+  raft-state)
 
 (defn handle-rpc [raft-state event]
   (let [{:keys [response state]}
