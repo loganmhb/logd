@@ -2,6 +2,7 @@
   (:require [cheshire.core :as json]
             [clojure.tools.logging :as log]
             [compojure.core :refer [defroutes GET POST]]
+            [logd.raft :as raft]
             [logd.tcp :as ltcp]
             [manifold.deferred :as d]
             [manifold.stream :as s]
@@ -47,9 +48,13 @@
 
 (comment
   (d/chain (ltcp/call-rpc "localhost" 3456
-                          {:type :append-entries-response
-                           :success true
-                           :term 0})
+                          {:type :append-entries
+                           :term 1
+                           :leader-id "peer1"
+                           :prev-log-index 0
+                           :prev-log-term 0
+                           :entries [{:term 1 :data "correct"}]
+                           :leader-commit 1})
            println)
   @(s/take! event-stream)
   (def client *2)
@@ -57,4 +62,5 @@
   @(s/put! (:cb-stream *1) (:rpc *1))
   (mount.core/stop)
   (mount.core/start)
-  )
+  
+  (raft/run-raft logd.core/event-stream (raft/initial-raft-state [])))

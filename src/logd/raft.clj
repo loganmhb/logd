@@ -53,6 +53,7 @@
                                           new-timeout))))
 
 (defn become-candidate [raft-state]
+  (log/info "Election timeout reached. Becoming :candidate")
   (-> raft-state
       (reset-timeout)
       (update :current-term inc)
@@ -89,12 +90,14 @@
   (cond
     (< (:term data) (:current-term state))
     {:response {:term (:current-term state)
+                :type :append-entries-response
                 :success false}
      :state state}
 
     (or (prev-log-index-missing? state (:prev-log-index data))
         (prev-log-entry-from-wrong-term? state data))
     {:response {:term (:current-term state)
+                :type :append-entries-response
                 :success false}
      :state (reset-timeout (become-follower state))}
 
@@ -102,6 +105,7 @@
     ;; we need to update the state.
     :else
     {:response {:success true
+                :type :append-entries-response
                 :term (:term data)}
      :state (-> state
                 become-follower
@@ -118,10 +122,12 @@
   (if (or (< (:term data) (:current-term state))
           (< (:last-log-index data) (count (:log state)))
           (:voted-for state))
-    {:response {:vote-granted false
+    {:response {:type :request-vote-response
+                :vote-granted false
                 :term (:current-term state)}
      :state state}
-    {:response {:vote-granted true
+    {:response {:type :request-vote-response
+                :vote-granted true
                 :term (:current-term state)}
      :state (-> state
                 (assoc :voted-for (:candidate-id data))
@@ -156,7 +162,7 @@
   [raft-state event]
   (cond
     (:rpc event)
-    (handle-rpc event)
+    (handle-rpc raft-state event)
 
     (:read event)
     (handle-read raft-state event)
@@ -164,7 +170,8 @@
     (:write event)
     (handle-write raft-state event)))
 
-(defn send-request-votes [raft-state])
+(defn send-request-votes [raft-state]
+  raft-state)
 
 (defn run-raft [events initial-state]
   (loop [state initial-state]
