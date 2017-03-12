@@ -50,6 +50,22 @@
       (assoc :role :candidate
              :votes-received 1)))
 
+(defn get-log-index
+  "Provides 1-indexed log access to comply with Raft semantics"
+  [state n]
+  (when (> n 1)
+    (get-in state [:log (dec n)])))
+
+(defn prev-log-index-missing? [state prev-log-index]
+  (and (> prev-log-index 0)
+       (nil? (get-log-index state prev-log-index))))
+
+(defn prev-log-entry-from-wrong-term? [state data]
+  (and (< 0 (:prev-log-index data))
+       (not= (:term (get-log-index state
+                                   (:prev-log-index data)))
+             (:prev-log-term data))))
+
 (defn await-majority [& deferreds]
   (let [results (s/stream)]
     (doseq [d deferreds]
