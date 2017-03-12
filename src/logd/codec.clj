@@ -10,9 +10,9 @@
 (gloss/defcodec rpc-type
   (gloss/enum :byte
               :append-entries
-              :request-votes
+              :request-vote
               :append-entries-response
-              :request-votes-response))
+              :request-vote-response))
 
 (gloss/defcodec server-id
   (gloss/finite-frame :int16
@@ -31,15 +31,15 @@
    :success (gloss/enum :byte true false)
    :term :int32})
 
-(gloss/defcodec request-votes
-  {:type :request-votes
+(gloss/defcodec request-vote
+  {:type :request-vote
    :term :int32
    :candidate-id server-id
    :last-log-index :int32
    :last-log-term :int32})
 
-(gloss/defcodec request-votes-response
-  {:type :request-votes-response
+(gloss/defcodec request-vote-response
+  {:type :request-vote-response
    :vote-granted (gloss/enum :byte true false)
    :term :int32})
 
@@ -47,6 +47,6 @@
   (gloss/header rpc-type
                 {:append-entries append-entries
                  :append-entries-response append-entries-response
-                 :request-votes request-votes
-                 :request-votes-response request-votes-response}
+                 :request-vote request-vote
+                 :request-vote-response request-vote-response}
                 :type))
