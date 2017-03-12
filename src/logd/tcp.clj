@@ -5,7 +5,10 @@
             [manifold.deferred :as d]
             [manifold.stream :as s]))
 
-(defn wrap-raft-rpc [s]
+(defn wrap-raft-rpc
+  "Wraps a Manifold stream to automatically serialize and deserialize
+   Raft RPC calls (puts serialized, takes deserialized)."
+  [s]
   (let [out (s/stream)]
     (s/connect (s/map #(glossio/encode codec/raft-rpc %) out)
                s)
