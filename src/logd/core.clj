@@ -1,37 +1,60 @@
 (ns logd.core
   (:require [cheshire.core :as json]
-            [clj-http.client :as http]
-            [clojure.core.async :as async]
+            [clojure.tools.logging :as log]
             [compojure.core :refer [defroutes GET POST]]
+            [logd.tcp :as ltcp]
+            [manifold.deferred :as d]
+            [manifold.stream :as s]
             [mount.core :refer [defstate]]
             [ring.adapter.jetty :as jetty]
             [ring.middleware.defaults :refer [api-defaults wrap-defaults]]))
 
-(defroutes public-routes
-  (GET "/log" {body :body}
-    {:status 200 :body body})
-  (POST "/log" {body :body}
-    {:status 200 :body body}))
+;; Main bus for communicating between Raft executor and network
+(defstate event-stream
+  :start (s/stream)
+  :stop (.close event-stream))
 
-(defroutes peer-routes
-  (POST "/request-vote" [] {:status 200 :body "ok"})
-  (POST "/append-entries" [entries] {:status 200 :body "ok"}))
+(defn enqueue-request [req]
+  (let [result (d/deferred)]
+    (s/put! event-stream (assoc req :result result))
+    (-> result
+        (d/chain (fn [res]
+                   {:status 200
+                    :body (json/generate-string res)}))
+        (d/catch Exception
+            #(do (log/error %)
+                 {:status 500
+                  :body %})))))
+
+(defroutes public-routes
+  (GET "/log" []
+    (enqueue-request {:read :all}))
+  (POST "/log" {body :body}
+    (enqueue-request {:write body})))
 
 (def public-app (wrap-defaults public-routes api-defaults))
 
-(def peer-app (wrap-defaults peer-routes api-defaults))
+(defstate public-server
+  :start (jetty/run-jetty public-app {:port 3457 :join? false})
+  :stop (.stop public-server))
 
 (defstate peer-server
-  :start (jetty/run-jetty peer-app {:port 9001 :join? false})
-  :stop (.stop peer-server))
-
-(defstate public-server
-  :start (jetty/run-jetty public-app {:port 9000 :join? false})
-  :stop (.stop public-server))
+  :start (ltcp/start-server event-stream 3456)
+  :stop (.close peer-server))
 
 (defn -main [& peer-hosts]
   (mount.core/start))
 
 (comment
-  (http/post "http://localhost:9000/log" {:body (json/generate-string {:hi "there"})})
-  ) 
+  (d/chain (ltcp/call-rpc "localhost" 3456
+                          {:type :append-entries-response
+                           :success true
+                           :term 0})
+           println)
+  @(s/take! event-stream)
+  (def client *2)
+  *2
+  @(s/put! (:cb-stream *1) (:rpc *1))
+  (mount.core/stop)
+  (mount.core/start)
+  )

@@ -1,7 +1,8 @@
 (ns logd.raft
   (:require [clojure.core.async :as async]
             [logd.raft.candidate :as candidate]
-            [logd.raft.follower :as follower]))
+            [logd.raft.follower :as follower]
+            [manifold.stream :as s]))
 
 (defn new-election-timeout
   []
@@ -24,6 +25,7 @@
    :last-applied 0
    :peers #{peers}
    :role :follower
+   :election-timeout (+ (System/currentTimeMillis) 150)
    ;; Candidate state for bookkeeping requesting votes
    :requested-votes? false
    :votes-received 0
@@ -32,3 +34,19 @@
                              (for [peer peers]
                                {peer {:match-index 0
                                       :next-index 1}}))})
+
+(defn time-remaining [raft-state]
+  (- (:election-timeout raft-state)
+     (System/currentTimeMillis)))
+
+(defn run-raft [events peers]
+  (loop [state (initial-raft-state peers)]
+    (let [ev @(s/try-take! events (time-remaining state) ::timeout)]
+      (cond
+        (= ev ::timeout) (become-candidate)
+        ;; Other conditions?
+        ;; - read request
+        ;; - write request
+        ;; - AppendEntries rpc
+        ;; - RequestVotes rpc
+        ))))
