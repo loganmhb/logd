@@ -19,15 +19,13 @@
 
   The Raft protocol specifies a log of changes applied to a state
   machine, but since the desired state here is a log no actual state
-  machine is necessary, only the log itself -- :last-applied simply
-  indicates the portion of the log that could be considered
-  canonical."
+  machine is necessary, only the log itself so :last-applied is
+  omitted."
   [peers]
   {:current-term 0
    :voted-for nil
    :log []
    :commit-index 0
-   :last-applied 0
    :role :follower
    :election-timeout (new-election-timeout)
    ;; Candidate state for bookkeeping requesting votes
