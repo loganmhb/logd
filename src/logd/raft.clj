@@ -82,8 +82,7 @@
   (when (not= (:role raft-state) :follower)
     (log/info "Converting role from" (:role raft-state) "to :follower."))
   (assoc raft-state
-         :role :follower
-         :voted-for nil))
+         :role :follower))
 
 (defn handle-append-entries
   "Implements Raft AppendEntries. Given a Raft state an an
@@ -132,7 +131,8 @@
       (do (log/info "Not granting vote -- term out of date.")
           not-granted-resp)
 
-      (:voted-for state)
+      (some-> (:term (:voted-for state))
+              (>= (:term data)))
       (do (log/info "Not granting vote -- voted for" (:voted-for state))
           not-granted-resp)
 
@@ -147,7 +147,8 @@
                     :vote-granted true
                     :term (:current-term state)}
          :state (-> state
-                    (assoc :voted-for (:candidate-id data))
+                    (assoc :voted-for {:candidate (:candidate-id data)
+                                       :term (:term data)})
                     reset-timeout)}))))
 
 (defn handle-read
@@ -184,7 +185,6 @@
     raft-state))
 
 (defn handle-vote [raft-state event]
-  (log/info "Handling vote" event)
   (if (< (:term event) (:current-term raft-state))
     ;; Out of date -- ignore.
     raft-state
@@ -228,8 +228,7 @@
                                                             0)
                                          :term (:current-term raft-state)
                                          :candidate-id (:id config)})]
-          (d/chain (s/put! event-stream req)
-                   #(log/info "Delivered?" % req)))        
+          (s/put! event-stream req))
         (d/catch #(log/error "Caught error making request:" %))))  
   raft-state)
 
