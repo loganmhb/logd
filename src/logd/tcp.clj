@@ -35,9 +35,12 @@
    {:port port}))
 
 
+(defn rpc-client [host port]
+  (d/chain (tcp/client {:host host :port port})
+           wrap-raft-rpc))
+
 (defn call-rpc [host port rpc]
-  (d/let-flow [tcp-client (tcp/client {:host host :port port})
-               client (wrap-raft-rpc tcp-client)]
+  (d/let-flow [client (rpc-client host port)]
     (log/info "Making RPC call to host" host ":" rpc)
     (d/chain (s/put! client rpc)
-             #(s/take! client %))))
+             (fn [_] (s/take! client)))))
