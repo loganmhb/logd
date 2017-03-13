@@ -1,7 +1,13 @@
 (ns logd.raft
   (:require [clojure.tools.logging :as log]
+            [logd.tcp :as ltcp]
             [manifold.deferred :as d]
-            [manifold.stream :as s]))
+            [manifold.stream :as s]
+            [mount.core :as mount :refer [defstate]]
+            [aleph.tcp :as tcp]))
+
+(defstate config
+  :start (:options (mount/args)))
 
 (defn new-election-timeout
   []
@@ -22,7 +28,6 @@
    :log []
    :commit-index 0
    :last-applied 0
-   :peers #{peers}
    :role :follower
    :election-timeout (new-election-timeout)
    ;; Candidate state for bookkeeping requesting votes
@@ -76,7 +81,9 @@
 (defn become-follower [raft-state]
   (when (not= (:role raft-state) :follower)
     (log/info "Converting role from" (:role raft-state) "to :follower."))
-  (assoc raft-state :role :follower))
+  (assoc raft-state
+         :role :follower
+         :voted-for nil))
 
 (defn handle-append-entries
   "Implements Raft AppendEntries. Given a Raft state an an
@@ -116,24 +123,32 @@
 (defn handle-request-vote
   "Implements the RequestVote RPC."
   [state data]
-  (if (or (< (:term data) (:current-term state))
-          (< (:last-log-index data) (count (:log state)))
-          (:voted-for state))
-    {:response {:type :request-vote-response
-                :vote-granted false
-                :term (:current-term state)}
-     :state state}
-    {:response {:type :request-vote-response
-                :vote-granted true
-                :term (:current-term state)}
-     :state (-> state
-                (assoc :voted-for (:candidate-id data))
-                reset-timeout)}))
+  (let [not-granted-resp {:response {:type :request-vote-response
+                                     :vote-granted false
+                                     :term (:current-term state)}
+                          :state state}]
+    (cond
+      (< (:term data) (:current-term state))
+      (do (log/info "Not granting vote -- term out of date.")
+          not-granted-resp)
 
-(defn await-majority [& deferreds]
-  (let [results (s/stream)]
-    (doseq [d deferreds]
-      (d/chain d #(s/put! results %)))))
+      (:voted-for state)
+      (do (log/info "Not granting vote -- voted for" (:voted-for state))
+          not-granted-resp)
+
+      (< (:last-log-index data) (count (:log state)))
+      (do (log/info "Not granting vote -- index out of date.")
+          not-granted-resp)
+      
+      :else
+      (do
+        (log/info "Voting for" (:candidate-id data))
+        {:response {:type :request-vote-response
+                    :vote-granted true
+                    :term (:current-term state)}
+         :state (-> state
+                    (assoc :voted-for (:candidate-id data))
+                    reset-timeout)}))))
 
 (defn handle-read
   "If leader, send AppendEntries to confirm leadership, then reply with log.
@@ -159,11 +174,34 @@
     (s/put! (:cb-stream event) response)
     state))
 
+(defn become-leader-if-elected [raft-state]
+  (if (> (:votes-received raft-state) (/ (count (:peer config))
+                                         2))
+    (do (log/info "Received" (:votes-received raft-state) "votes -- becoming :leader.")
+        (assoc raft-state
+               :role :leader
+               :voted-for nil))
+    raft-state))
+
+(defn handle-vote [raft-state event]
+  (log/info "Handling vote" event)
+  (if (< (:term event) (:current-term raft-state))
+    ;; Out of date -- ignore.
+    raft-state
+    (if (:vote-granted event)
+      (do (log/info "Vote granted for term" (:term event))          
+          (-> raft-state
+              (update :votes-received inc)
+              become-leader-if-elected))
+      (do (log/info "Vote not granted for term" (:term event))
+          (assoc raft-state
+                 :current-term (:term event))))))
+
 (defn handle-event
   "Applies an event to a Raft state, performing side effects if necessary
   (e.g. making RPC calls to request votes or append entries)"
   [raft-state event]
-  (cond
+  (cond    
     (:rpc event)
     (handle-rpc raft-state event)
 
@@ -171,20 +209,39 @@
     (handle-read raft-state event)
 
     (:write event)
-    (handle-write raft-state event)))
+    (handle-write raft-state event)
 
-(defn send-request-votes [raft-state]
+    (contains? event :vote-granted)
+    (handle-vote raft-state event)
+
+    :else (log/warn "Unrecognized event:" event)))
+
+(defn send-request-votes
+  "Asynchronously request votes from peers."
+  [raft-state event-stream]  
+  (log/info "Requesting votes from peers" (:peer config)) 
+  (doseq [peer (:peer config)]
+    (-> (d/let-flow [req (ltcp/call-rpc peer 3456
+                                        {:type :request-vote
+                                         :last-log-index (count (:log raft-state))
+                                         :last-log-term (or (:term (last (:log raft-state)))
+                                                            0)
+                                         :term (:current-term raft-state)
+                                         :candidate-id (:id config)})]
+          (d/chain (s/put! event-stream req)
+                   #(log/info "Delivered?" % req)))        
+        (d/catch #(log/error "Caught error making request:" %))))  
   raft-state)
 
 (defn run-raft [events initial-state]
   (loop [state initial-state]
     (let [ev @(s/try-take! events ::closed
                            (time-remaining state) ::timeout)]
+      (log/info "Got event:" ev)
       (cond
         (= ev ::timeout) (-> state
                              become-candidate
-                             send-request-votes
+                             (send-request-votes events)
                              recur)
         (= ev ::closed) nil ; just stop?
         :else (recur (handle-event state ev))))))
-

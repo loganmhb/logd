@@ -1,6 +1,7 @@
 (ns logd.core
   (:gen-class)
   (:require [cheshire.core :as json]
+            [clojure.tools.cli :as cli]
             [clojure.tools.logging :as log]
             [compojure.core :refer [defroutes GET POST]]
             [logd.raft :as raft]
@@ -9,7 +10,9 @@
             [manifold.stream :as s]
             [mount.core :refer [defstate]]
             [ring.adapter.jetty :as jetty]
-            [ring.middleware.defaults :refer [api-defaults wrap-defaults]]))
+            [ring.middleware.defaults :refer [api-defaults wrap-defaults]]
+            [mount.core :as mount]
+            [clojure.string :as str]))
 
 ;; Main bus for communicating between Raft executor and network
 (defstate event-stream
@@ -44,9 +47,21 @@
   :start (ltcp/start-server event-stream 3456)
   :stop (.close peer-server))
 
-(defn -main [& peer-hosts]
-  (mount.core/start)
-  (raft/run-raft event-stream (raft/initial-raft-state [])))
+
+(def argspec
+  [["-p" "--peer ADDR" "Peer host or IP"
+    :default #{}
+    :assoc-fn (fn [m k v] (update m k conj v))]
+   ["-i" "--id NAME" "ID (hostname or IP of this server)"]
+   ["-h" "--help"]])
+
+(defn -main [& args]
+  (let [opts (cli/parse-opts args argspec)]
+    (mount.core/start-with-args {:options (:options opts)} #'raft/config)
+    (mount.core/start)
+    (log/info "Config:" raft/config)
+    (log/info "Running Raft with peers" (str/join ", " (:peer raft/config)))
+    (raft/run-raft event-stream (raft/initial-raft-state (:peer raft/config)))))
 
 (comment
   (d/chain (ltcp/call-rpc "localhost" 3456
@@ -58,11 +73,12 @@
                            :entries [{:term 1 :data "correct"}]
                            :leader-commit 1})
            println)
-  @(s/take! event-stream)
+  (.close event-stream)
   (def client *2)
   *2
   @(s/put! (:cb-stream *1) (:rpc *1))
   (mount.core/stop)
   (mount.core/start)
   
-  (raft/run-raft logd.core/event-stream (raft/initial-raft-state [])))
+  (future (raft/run-raft logd.core/event-stream (raft/initial-raft-state [])))
+  )
