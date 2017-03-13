@@ -1,0 +1,34 @@
+version: '2'
+
+services:
+  peer1:
+    build: .
+    container_name: peer1
+    command: java -jar /srv/logd/logd-0.1.0-SNAPSHOT-standalone.jar -p peer2 -p peer3 --id peer1
+    ports:
+      - 3456
+      - 3457
+    networks:
+      - my-net
+  peer2:
+    build: .
+    container_name: peer2
+    command: java -jar /srv/logd/logd-0.1.0-SNAPSHOT-standalone.jar -p peer1 -p peer3 --id peer2
+    ports:
+      - 3456
+      - 3457
+    networks:
+      - my-net
+  peer3:
+    build: .
+    container_name: peer3
+    ports:
+      - 3456
+      - 3457
+    command: java -jar /srv/logd/logd-0.1.0-SNAPSHOT-standalone.jar -p peer1 -p peer2 --id peer3
+    networks:
+      - my-net
+
+networks:
+  my-net:
+    driver: bridge
