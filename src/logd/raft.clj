@@ -212,7 +212,8 @@
     (contains? event :vote-granted)
     (handle-vote raft-state event)
 
-    :else (log/warn "Unrecognized event:" event)))
+    :else (do (log/warn "Unrecognized event:" event)
+              raft-state)))
 
 (defn send-request-votes
   "Asynchronously request votes from peers."
@@ -234,11 +235,10 @@
   (loop [state initial-state]
     (let [ev @(s/try-take! events ::closed
                            (time-remaining state) ::timeout)]
-      (log/info "Got event:" ev)
       (cond
         (= ev ::timeout) (-> state
                              become-candidate
                              (send-request-votes events)
                              recur)
-        (= ev ::closed) nil ; just stop?
+        (= ev ::closed) (log/info "Stopping -- event stream closed.") ; just stop?
         :else (recur (handle-event state ev))))))
