@@ -23,6 +23,7 @@
    :term :int32
    :leader-id server-id
    :prev-log-index :int32
+   :prev-log-term :int32
    :entries (gloss/repeated log-entry)
    :leader-commit :int32})
 

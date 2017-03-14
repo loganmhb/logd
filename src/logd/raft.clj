@@ -6,12 +6,9 @@
             [mount.core :as mount :refer [defstate]]
             [aleph.tcp :as tcp]))
 
-(defstate config
-  :start (:options (mount/args)))
-
 (defn new-election-timeout
   []
-  (+ (System/currentTimeMillis) 150 (rand-int 100)))
+  (+ (System/currentTimeMillis) 1500 (rand-int 100)))
 
 (defn initial-raft-state
   "Structure describing the state of the Raft system, given a list of
@@ -20,9 +17,18 @@
   The Raft protocol specifies a log of changes applied to a state
   machine, but since the desired state here is a log no actual state
   machine is necessary, only the log itself so :last-applied is
-  omitted."
-  [peers]
-  {:current-term 0
+  omitted.
+  
+  There's some additional book keeping over and above what's specified
+  in the Raft paper here because the paper assumes synchronous RPC
+  calls updating mutable state, while we use asynchronous RPC calls
+  that result in response events. The upshot of that is 1)
+  AppendEntries responses need to include the index they're responding
+  to, and 2) we need to keep track of which peers we've sent requests to
+  already."
+  [server-id peers]
+  {:server-id server-id
+   :current-term 0
    :voted-for nil
    :log []
    :commit-index 0
@@ -30,16 +36,18 @@
    :election-timeout (new-election-timeout)
    ;; Candidate state for bookkeeping requesting votes
    :votes-received 0
-   ;; Leader state for tracking replication
-   :replication-status (into {}
-                             (for [peer peers]
-                               {peer {:match-index 0
-                                      :next-index 1}}))})
+   :replication-state (into {}
+                            (for [peer peers]
+                              [peer {:match-index 0
+                                     :next-index 1
+                                     :rpc-sent? false}]))})
 
 (defn time-remaining [raft-state]
-  (- (:election-timeout raft-state)
-     (System/currentTimeMillis)))
-
+  (if (= :leader (:role raft-state))
+    (- (:heartbeat-timeout raft-state)
+       (System/currentTimeMillis))
+    (- (:election-timeout raft-state)
+       (System/currentTimeMillis))))
 
 (defn reset-timeout
   "Resets the election timeout monotonically (i.e. it won't reduce the
@@ -60,6 +68,12 @@
       (assoc :role :candidate
              :votes-received 1)))
 
+(defn become-follower [raft-state]
+  (when (not= (:role raft-state) :follower)
+    (log/info "Converting role from" (:role raft-state) "to :follower."))
+  (assoc raft-state
+         :role :follower))
+
 (defn get-log-index
   "Provides 1-indexed log access to comply with Raft semantics"
   [state n]
@@ -75,12 +89,6 @@
        (not= (:term (get-log-index state
                                    (:prev-log-index data)))
              (:prev-log-term data))))
-
-(defn become-follower [raft-state]
-  (when (not= (:role raft-state) :follower)
-    (log/info "Converting role from" (:role raft-state) "to :follower."))
-  (assoc raft-state
-         :role :follower))
 
 (defn handle-append-entries
   "Implements Raft AppendEntries. Given a Raft state an an
@@ -174,12 +182,16 @@
     state))
 
 (defn become-leader-if-elected [raft-state]
-  (if (> (:votes-received raft-state) (/ (count (:peer config))
+  (if (> (:votes-received raft-state) (/ (count (:peer raft-state))
                                          2))
     (do (log/info "Received" (:votes-received raft-state) "votes -- becoming :leader.")
         (assoc raft-state
                :role :leader
-               :voted-for nil))
+               :heartbeat-timeout (System/currentTimeMillis)
+               ;; FIXME: dry vs initial-raft-state
+               :replication-state (into {} (for [[peer _] (:replication-state raft-state)]
+                                             [peer {:match-index 0
+                                                    :next-index (inc (count (:log raft-state)))}]))))
     raft-state))
 
 (defn handle-vote [raft-state event]
@@ -212,33 +224,105 @@
     (contains? event :vote-granted)
     (handle-vote raft-state event)
 
+    (contains? event :success)
+    (do (log/info "Append entries response:" event)
+        raft-state)
+
     :else (do (log/warn "Unrecognized event:" event)
               raft-state)))
 
 (defn send-request-votes
   "Asynchronously request votes from peers."
-  [raft-state event-stream]  
-  (log/info "Requesting votes from peers" (:peer config)) 
-  (doseq [peer (:peer config)]
+  [raft-state event-stream]
+  (log/info "Requesting votes from peers" (keys (:replication-state raft-state))) 
+  (doseq [peer (keys (:replication-state raft-state))]
     (-> (d/let-flow [req (ltcp/call-rpc peer 3456
                                         {:type :request-vote
                                          :last-log-index (count (:log raft-state))
                                          :last-log-term (or (:term (last (:log raft-state)))
                                                             0)
                                          :term (:current-term raft-state)
-                                         :candidate-id (:id config)})]
-          (s/put! event-stream req))
+                                         :candidate-id (:server-id raft-state)})]
+          (if (= ::ltcp/timeout req)
+            (s/put! event-stream {::ltcp/timeout peer})
+            (s/put! event-stream req)))
         (d/catch #(log/error "Caught error making request:" %))))  
   raft-state)
 
+(defn peer-behind?
+  "Returns true if a peer is behind in the logs and a request hasn't
+  already been sent. (Requests are sent with a timeout so that in the
+  case of a network failure the request will be treated as failed and
+  rpc-sent? will be reset.)"
+  [raft-state [_ {:keys [match-index rpc-sent?]}]]
+  (and (> (count (:log raft-state)) match-index)
+       (not rpc-sent?)))
+
+(defn append-entries-request [raft-state peer]
+  (let [peer-status (get-in raft-state [:replication-state peer])
+        last-index (dec (:next-index peer-status))]
+    {:type :append-entries
+     :term (:current-term raft-state)
+     :leader-id (:server-id raft-state)
+     :prev-log-index last-index
+     :prev-log-term (or (:term (get-log-index raft-state last-index)) 0)
+     :entries (into [] (drop last-index (:log raft-state)))
+     :leader-commit (:commit-index raft-state)}))
+
+(defn send-append-entries
+  "Replicate log entries to a peer. If heartbeat? is true, will send a request to all peers
+   even if they're up to date. Returns raft state with updated replication bookkeeping."
+  ([raft-state event-stream] (send-append-entries raft-state event-stream false))
+  ([raft-state event-stream heartbeat?]
+   (let [peers-to-call (if heartbeat?
+                         (keys (:replication-state raft-state))
+                         (->> raft-state
+                              :replication-state
+                              keys
+                              (filter #(peer-behind? raft-state
+                                                     [% (get-in raft-state [:replication-state %])]))
+                              (map first)))]
+     (log/info "Sending AppendEntries to peers" (pr-str peers-to-call))
+     (doseq [peer peers-to-call]
+       (-> (ltcp/call-rpc peer 3456 (append-entries-request raft-state peer))
+           ;; If the call succeeds, put the response on the event
+           ;; stream. Otherwise put the failure on the event stream.           
+           (d/chain #(if (= % ::ltcp/timeout)
+                       (s/put! event-stream {::ltcp/timeout peer})
+                       (s/put! event-stream %)))
+           (d/catch #(s/put! event-stream {::ltcp/error %}))))
+     ;; If this is a heartbeat broadcast we need to reset the heartbeat timer.
+     ;; If it's not, we need to mark the peers that we've made requests to.
+     (log/spy :info
+              (if heartbeat?
+                (assoc raft-state :heartbeat-timeout (+ 500 (System/currentTimeMillis)))
+                (update raft-state :replication-state
+                        #(reduce (fn [rs peer]
+                                   (assoc rs peer :rpc-sent? true))
+                                 %
+                                 peers-to-call)))))))
+
+(defn replication-needed?
+  "Checks whether any followers are behind the leader log or the
+  heartbeat timeout has expired."
+  [raft-state]
+  (or (>= (System/currentTimeMillis) (:heartbeat-timeout raft-state))
+      (some #(peer-behind? raft-state %)
+            (:replication-state raft-state))))
+
 (defn run-raft [events initial-state]
   (loop [state initial-state]
-    (let [ev @(s/try-take! events ::closed
-                           (time-remaining state) ::timeout)]
-      (cond
-        (= ev ::timeout) (-> state
-                             become-candidate
-                             (send-request-votes events)
-                             recur)
-        (= ev ::closed) (log/info "Stopping -- event stream closed.") ; just stop?
-        :else (recur (handle-event state ev))))))
+    (if (and (= :leader (:role state)) (replication-needed? state))
+      (recur (send-append-entries state events true))
+      (let [ev @(s/try-take! events ::closed
+                             (time-remaining state) ::timeout)]
+        (cond
+          (= ev ::timeout) (if (= :leader (:role state))
+                             (do (log/info "Sending heartbeat.")
+                                 (recur (send-append-entries state events true)))
+                             (-> state
+                                 become-candidate
+                                 (send-request-votes events)
+                                 recur))
+          (= ev ::closed) (log/info "Stopping -- event stream closed.") ; just stop?
+          :else (recur (handle-event state ev)))))))

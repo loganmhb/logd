@@ -43,4 +43,4 @@
   (d/let-flow [client (rpc-client host port)]
     (log/info "Making RPC call to host" host ":" rpc)
     (d/chain (s/put! client rpc)
-             (fn [_] (s/take! client)))))
+             (fn [_] (s/try-take! client ::closed 50 ::timeout)))))

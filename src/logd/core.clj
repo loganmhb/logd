@@ -57,11 +57,10 @@
 
 (defn -main [& args]
   (let [opts (cli/parse-opts args argspec)]
-    (mount.core/start-with-args {:options (:options opts)} #'raft/config)
     (mount.core/start)
-    (log/info "Config:" raft/config)
-    (log/info "Running Raft with peers" (str/join ", " (:peer raft/config)))
-    (raft/run-raft event-stream (raft/initial-raft-state (:peer raft/config)))))
+    (log/info "Running Raft with peers" (str/join ", " (:peer (:options opts))))
+    (raft/run-raft event-stream (raft/initial-raft-state (:id (:options opts))
+                                                         (:peer (:options opts))))))
 
 (comment
   (d/chain (ltcp/call-rpc "localhost" 3456
