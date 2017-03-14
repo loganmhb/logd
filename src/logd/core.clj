@@ -35,9 +35,9 @@
   (GET "/log" []
     (enqueue-request {:read :all}))
   (POST "/log" {body :body}
-    (enqueue-request {:write body})))
+    (enqueue-request {:write (slurp body)})))
 
-(def public-app (wrap-defaults public-routes api-defaults))
+(def public-app public-routes)
 
 (defstate public-server
   :start (jetty/run-jetty public-app {:port 3457 :join? false})

@@ -157,30 +157,6 @@
                                        :term (:term data)})
                     reset-timeout)}))))
 
-(defn handle-read
-  "If leader, send AppendEntries to confirm leadership, then reply with log.
-   Otherwise, redirect to the leader."
-  [raft-state event]
-  ;;FIXME: don't handle reads as a follower, and send a round of AppendEntries
-  ;;before replying to a read as a leader
-  (log/info "Handling read:" event)
-  (d/success! (:result event) (:log raft-state))
-  raft-state)
-
-(defn handle-write
-  "If leader, send AppendEntries and wait for majority success, then reply success.
-   Otherwise, redirect to the leader."
-  [raft-state event]
-  raft-state)
-
-(defn handle-rpc [raft-state event]
-  (let [{:keys [response state]}
-        (case (:type (:rpc event))
-          :append-entries (handle-append-entries raft-state (:rpc event))
-          :request-vote (handle-request-vote raft-state (:rpc event)))]
-    (s/put! (:cb-stream event) response)
-    state))
-
 (defn become-leader-if-elected [raft-state]
   (if (> (:votes-received raft-state) (/ (count (:peer raft-state))
                                          2))
@@ -193,43 +169,6 @@
                                              [peer {:match-index 0
                                                     :next-index (inc (count (:log raft-state)))}]))))
     raft-state))
-
-(defn handle-vote [raft-state event]
-  (if (< (:term event) (:current-term raft-state))
-    ;; Out of date -- ignore.
-    raft-state
-    (if (:vote-granted event)
-      (do (log/info "Vote granted for term" (:term event))          
-          (-> raft-state
-              (update :votes-received inc)
-              become-leader-if-elected))
-      (do (log/info "Vote not granted for term" (:term event))
-          (assoc raft-state
-                 :current-term (:term event))))))
-
-(defn handle-event
-  "Applies an event to a Raft state, performing side effects if necessary
-  (e.g. making RPC calls to request votes or append entries)"
-  [raft-state event]
-  (cond    
-    (:rpc event)
-    (handle-rpc raft-state event)
-
-    (:read event)
-    (handle-read raft-state event)
-
-    (:write event)
-    (handle-write raft-state event)
-
-    (contains? event :vote-granted)
-    (handle-vote raft-state event)
-
-    (contains? event :success)
-    (do (log/info "Append entries response:" event)
-        raft-state)
-
-    :else (do (log/warn "Unrecognized event:" event)
-              raft-state)))
 
 (defn send-request-votes
   "Asynchronously request votes from peers."
@@ -280,8 +219,7 @@
                               :replication-state
                               keys
                               (filter #(peer-behind? raft-state
-                                                     [% (get-in raft-state [:replication-state %])]))
-                              (map first)))]
+                                                     [% (get-in raft-state [:replication-state %])]))))]
      (log/info "Sending AppendEntries to peers" (pr-str peers-to-call))
      (doseq [peer peers-to-call]
        (-> (ltcp/call-rpc peer 3456 (append-entries-request raft-state peer))
@@ -298,7 +236,7 @@
                 (assoc raft-state :heartbeat-timeout (+ 500 (System/currentTimeMillis)))
                 (update raft-state :replication-state
                         #(reduce (fn [rs peer]
-                                   (assoc rs peer :rpc-sent? true))
+                                   (assoc-in rs [peer :rpc-sent?] true))
                                  %
                                  peers-to-call)))))))
 
@@ -309,6 +247,75 @@
   (or (>= (System/currentTimeMillis) (:heartbeat-timeout raft-state))
       (some #(peer-behind? raft-state %)
             (:replication-state raft-state))))
+
+(defn handle-vote [raft-state event]
+  (if (< (:term event) (:current-term raft-state))
+    ;; Out of date -- ignore.
+    raft-state
+    (if (:vote-granted event)
+      (do (log/info "Vote granted for term" (:term event))          
+          (-> raft-state
+              (update :votes-received inc)
+              become-leader-if-elected))
+      (do (log/info "Vote not granted for term" (:term event))
+          (assoc raft-state
+                 :current-term (:term event))))))
+
+(defn handle-read
+  "If leader, send AppendEntries to confirm leadership, then reply with log.
+   Otherwise, redirect to the leader."
+  [raft-state event]
+  ;;FIXME: don't handle reads as a follower, and send a round of AppendEntries
+  ;;before replying to a read as a leader
+  (log/info "Handling read:" event)
+  (d/success! (:result event) (:log raft-state))
+  raft-state)
+
+(defn handle-write
+  "If leader, send AppendEntries and wait for majority success, then reply success.
+   Otherwise, redirect to the leader."
+  [raft-state event-stream event]
+  (if (= :leader (:role raft-state))
+    ;; ignoring acks for now
+    (do (d/success! (:result event) ::ok)
+        (send-append-entries (update raft-state :log
+                                     conj {:term (:current-term raft-state)
+                                           :data (:write event)})
+                             event-stream))
+    (do (d/success! (:result event) ::not-leader)
+        raft-state)))
+
+(defn handle-rpc [raft-state event]
+  (let [{:keys [response state]}
+        (case (:type (:rpc event))
+          :append-entries (handle-append-entries raft-state (:rpc event))
+          :request-vote (handle-request-vote raft-state (:rpc event)))]
+    (s/put! (:cb-stream event) response)
+    state))
+
+(defn handle-event
+  "Applies an event to a Raft state, performing side effects if necessary
+  (e.g. making RPC calls to request votes or append entries)"
+  [raft-state event-stream event]
+  (cond    
+    (:rpc event)
+    (handle-rpc raft-state event)
+
+    (:read event)
+    (handle-read raft-state event)
+
+    (:write event)
+    (handle-write raft-state event-stream event)
+
+    (contains? event :vote-granted)
+    (handle-vote raft-state event)
+
+    (contains? event :success)
+    (do (log/info "Append entries response:" event)
+        raft-state)
+
+    :else (do (log/warn "Unrecognized event:" event)
+              raft-state)))
 
 (defn run-raft [events initial-state]
   (loop [state initial-state]
@@ -325,4 +332,4 @@
                                  (send-request-votes events)
                                  recur))
           (= ev ::closed) (log/info "Stopping -- event stream closed.") ; just stop?
-          :else (recur (handle-event state ev)))))))
+          :else (recur (handle-event state events ev)))))))
