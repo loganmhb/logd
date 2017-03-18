@@ -1,4 +1,28 @@
 (ns logd.raft
+  "Implements logic for the Raft algorithm.
+
+  The design is intended to keep as much logic as possible in pure
+  functions and make the system as easy to reason about and test as
+  possible. In order to achieve those ends, all interactions with the
+  outside world occur by processing events arriving in a stream,
+  including timeouts and RPC calls. The request-response style RPCs
+  that Raft assumes are replaced with asynchronous RPCs that deliver
+  their results as events in the global stream.
+
+  Responses to events are implemented as pure functions that take the
+  system state and the event and return an updated state and a list of
+  side actions to be executed -- reset timeouts, make or respond to
+  RPC calls, etc. A thin imperative wrapper around these pure
+  functions handles actually executing the actions (asynchronously)
+  and tracking timeouts.
+
+  This pervasive asynchrony requires a little extra bookkeeping for
+  outstanding requests and extra information attached to RPC calls to
+  maintain Raft's guarantees, but pays off in testability and
+  transparency. Since events are all processed on a single stream,
+  capturing and simulating state transitions is simple compared to a
+  synchronous, parallel model, but the performance benefits of
+  performing network I/O (the probable bottleneck) are retained."
   (:require [clojure.tools.logging :as log]
             [logd.tcp :as ltcp]
             [manifold.deferred :as d]

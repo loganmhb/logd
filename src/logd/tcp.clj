@@ -1,4 +1,13 @@
 (ns logd.tcp
+  "Networking code, handling TCP clients, servers and serialization.
+
+  Currently one TCP connection per RPC is used -- it would be faster to
+  reuse connections for subsequent requests, but care must be taken to handle
+  timeouts and failed requests properly to avoid misinterpreting responses as
+  belonging to the wrong request.
+
+  (It might even be faster to just use HTTP/2 without writing custom
+  networking logic, I'm not sure.)"
   (:require [aleph.tcp :as tcp]
             [gloss.io :as glossio]
             [logd.codec :as codec]
@@ -20,8 +29,7 @@
     (s/splice out
               (glossio/decode-stream s codec/raft-rpc))))
 
-
-;; Sketch: handle incoming TCP deliveries by deserializing them,
+;; Handle incoming TCP deliveries by deserializing them,
 ;; passing them to another stream for processing with a callback stream
 ;; that will serialize the result back out
 (defn start-server [event-stream port]
@@ -33,7 +41,6 @@
                          s)
                   event-stream)))
    {:port port}))
-
 
 (defn rpc-client [host port]
   (d/chain (tcp/client {:host host :port port})
