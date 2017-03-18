@@ -18,4 +18,5 @@
                  [aleph "0.4.3"]
                  [manifold "0.1.6"]
                  [org.clojure/tools.cli "0.3.5"]
-                 [log4j "1.2.17"]])
+                 [log4j "1.2.17"]]
+  :plugins [[com.jakemccrary/lein-test-refresh "0.19.0"]])
