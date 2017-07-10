@@ -39,7 +39,8 @@
      (let [s (wrap-raft-rpc s)]
        (s/connect (s/map #(hash-map :rpc % :cb-stream s)
                          s)
-                  event-stream)))
+                  event-stream
+                  {:downstream? false})))
    {:port port}))
 
 (defn rpc-client [host port]

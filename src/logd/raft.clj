@@ -42,7 +42,7 @@
   machine, but since the desired state here is a log no actual state
   machine is necessary, only the log itself so :last-applied is
   omitted.
-  
+
   There's some additional book keeping over and above what's specified
   in the Raft paper here because the paper assumes synchronous RPC
   calls updating mutable state, while we use asynchronous RPC calls
@@ -169,7 +169,7 @@
       (< (:last-log-index data) (count (:log state)))
       (do (log/info "Not granting vote -- index out of date.")
           not-granted-resp)
-      
+
       :else
       (do
         (log/info "Voting for" (:candidate-id data))
@@ -197,7 +197,7 @@
 (defn send-request-votes
   "Asynchronously request votes from peers."
   [raft-state event-stream]
-  (log/info "Requesting votes from peers" (keys (:replication-state raft-state))) 
+  (log/info "Requesting votes from peers" (keys (:replication-state raft-state)))
   (doseq [peer (keys (:replication-state raft-state))]
     (-> (d/let-flow [req (ltcp/call-rpc peer 3456
                                         {:type :request-vote
@@ -209,7 +209,7 @@
           (if (= ::ltcp/timeout req)
             (s/put! event-stream {::ltcp/timeout peer})
             (s/put! event-stream req)))
-        (d/catch #(log/error "Caught error making request:" %))))  
+        (d/catch #(log/error "Caught error making request:" %))))
   raft-state)
 
 (defn peer-behind?
@@ -277,7 +277,7 @@
     ;; Out of date -- ignore.
     raft-state
     (if (:vote-granted event)
-      (do (log/info "Vote granted for term" (:term event))          
+      (do (log/info "Vote granted for term" (:term event))
           (-> raft-state
               (update :votes-received inc)
               become-leader-if-elected))
@@ -321,7 +321,7 @@
   "Applies an event to a Raft state, performing side effects if necessary
   (e.g. making RPC calls to request votes or append entries)"
   [raft-state event-stream event]
-  (cond    
+  (cond
     (:rpc event)
     (handle-rpc raft-state event)
 
